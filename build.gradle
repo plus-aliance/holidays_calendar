@@ -1,0 +1,98 @@
+apply plugin: 'groovy'
+apply plugin: 'application'
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile "org.codehaus.groovy:groovy-all:3.0.2"
+    compile "org.jsoup:jsoup:1.13.1"
+}
+
+task runSuperjob(type: JavaExec) {
+    classpath sourceSets.main.runtimeClasspath
+    main = 'ru.d10xa.holidays.Superjob'
+}
+
+task runConsultant(type: JavaExec) {
+    classpath sourceSets.main.runtimeClasspath
+    main = 'ru.d10xa.holidays.Consultant'
+}
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+import java.time.LocalDate
+
+class MergeHolidaysJsonTask extends DefaultTask {
+
+    @InputDirectory
+    File inputDir
+
+    @OutputFile
+    File output
+
+    Set<String> exclude = []
+
+    @TaskAction
+    def action() {
+        TreeSet<LocalDate> holidays = new TreeSet()
+        TreeSet<LocalDate> preholidays = new TreeSet()
+        TreeSet<LocalDate> nowork = new TreeSet()
+
+        inputDir
+            .listFiles()
+            .findAll { File f -> !exclude.contains(f.name) }
+            .findAll { File f -> f.name.toLowerCase().endsWith(".json")}
+            .collect { new JsonSlurper().parse(it) }
+            .each {
+                it['holidays']
+                    .collect { String str -> LocalDate.parse(str) }
+                    .each { holidays.add(it as LocalDate) }
+                it['preholidays']
+                    .collect { String str -> LocalDate.parse(str) }
+                    .each { preholidays.add(it as LocalDate) }
+                it['nowork']
+                    .collect { String str -> LocalDate.parse(str) }
+                    .each { nowork.add(it as LocalDate) }
+
+        }
+        def json = JsonOutput.toJson(
+            [
+                'holidays'   : holidays.collect { it.toString() },
+                'preholidays': preholidays.collect { it.toString() },
+                'nowork': nowork.collect { it.toString() }
+            ]
+        )
+        output.text = JsonOutput.prettyPrint(json)
+    }
+}
+
+task mergeJson(type: MergeHolidaysJsonTask) {
+    inputDir = file("json")
+    exclude = ["calendar.json", "superjob2020.json"]
+    output = file("json/calendar.json")
+}
+
+task compareCalendars
+compareCalendars.doLast {
+    List<Integer> years = new File("$projectDir/json")
+        .list()
+        .collect { it.find(/\d+/)?.toInteger() }
+        .findAll { it != null }
+        .unique()
+
+    years.forEach { y ->
+        def f1 = new File("$projectDir/json/superjob${y}.json")
+        def f2 = new File("$projectDir/json/consultant${y}.json")
+        if (!f1.isFile()) {
+            println("${f1.name} not exists")
+        } else if (!f2.isFile()) {
+            println("${f2.name} not exists")
+        } else {
+            println("$y eq ${f1.text == f2.text}")
+        }
+    }
+
+}
